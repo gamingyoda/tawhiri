@@ -39,6 +39,36 @@ def make_constant_ascent(ascent_rate):
         return 0.0, 0.0, ascent_rate
     return constant_ascent
 
+def make_shaped_ascent(ascent_rate, burst_altitude, shape=0.19):
+    """
+    Altitude-shaped ascent model.
+
+    factor = 1 + shape*(1 - 2*x),  x = alt/burst_altitude in [0,1]
+      alt=0      -> factor = 1 + shape
+      alt=burst  -> factor = 1 - shape
+    平均（0〜burstで積分平均）を取ると factor の平均は 1 なので、
+    入力 ascent_rate を「平均上昇率」として保ったまま形だけ変えられる。
+    """
+    def shaped_ascent(t, lat, lng, alt):
+        if burst_altitude <= 0:
+            return 0.0, 0.0, ascent_rate
+
+        x = alt / float(burst_altitude)
+        if x < 0.0:
+            x = 0.0
+        elif x > 1.0:
+            x = 1.0
+
+        factor = 1.0 + shape * (1.0 - 2.0 * x)
+
+        # 安全のための下限（負の上昇や極端値を防ぐ）
+        if factor < 0.2:
+            factor = 0.2
+
+        return 0.0, 0.0, ascent_rate * factor
+
+    return shaped_ascent
+
 
 def make_drag_descent(sea_level_descent_rate):
     """Return a descent-under-parachute model with sea level descent
@@ -198,7 +228,7 @@ def standard_profile(ascent_rate, burst_altitude, descent_rate,
        Returns a tuple of (model, terminator) pairs.
     """
 
-    model_up = make_linear_model([make_constant_ascent(ascent_rate),
+    model_up = make_linear_model([make_shaped_ascent(ascent_rate, burst_altitude, shape=0.19),
                                   make_wind_velocity(wind_dataset, warningcounts)])
     term_up = make_burst_termination(burst_altitude)
 
