@@ -1,7 +1,7 @@
 # -------------------
 # The build container
 # -------------------
-FROM debian:buster-slim AS build
+FROM debian:bookworm-slim AS build
 
 RUN apt-get update && \
   apt-get install -y --no-install-recommends \
