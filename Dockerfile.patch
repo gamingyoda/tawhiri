@@ -1,0 +1,6 @@
+FROM ghcr.io/projecthorus/tawhiri-container:latest
+
+# tawhiri の import 先が /root/tawhiri-master/tawhiri なのはあなたの出力通り
+COPY tawhiri/models.py /root/tawhiri-master/tawhiri/models.py
+
+ENV PYTHONDONTWRITEBYTECODE=1

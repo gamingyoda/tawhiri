@@ -4,16 +4,22 @@
 FROM debian:bookworm-slim AS build
 
 RUN apt-get update && \
+  apt-get upgrade -y && \
   apt-get install -y --no-install-recommends \
     build-essential \
     python3 \
     python3-dev \
+    python3-venv \
+    python3.11-venv \
     python3-pip \
     python3-setuptools \
     python3-cffi \
     libffi-dev \
     python3-wheel \
-    unzip && \
+    unzip \
+    imagemagick \
+    python3 \
+    tini && \
   rm -rf /var/lib/apt/lists/*
 
 COPY . /root/tawhiri

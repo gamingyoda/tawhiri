@@ -1,4 +1,4 @@
-#I made some modifications to this file to add shaped ascent profiles.
+__PATCH_ID__ = "DIMJP-2025-12-30-2137-00-tawhiri-models-shape-ascent-profile"
 
 """
 Provide all the balloon models, termination conditions and
@@ -25,6 +25,8 @@ def make_constant_ascent(ascent_rate):
     return constant_ascent
 
 def make_shaped_ascent(ascent_rate, burst_altitude, shape=0.19):
+    import sys
+    print("### HIT: make_shaped_ascent ###", ascent_rate, burst_altitude, shape, file=sys.stderr, flush=True)
     """
     Altitude-shaped ascent model.
 
