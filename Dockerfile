@@ -19,8 +19,10 @@ RUN apt-get update && \
 COPY . /root/tawhiri
 
 RUN cd /root/tawhiri && \
-  pip3 install --user --no-warn-script-location --ignore-installed -r requirements.txt && \
-  python3 setup.py build_ext --inplace
+  python3 -m venv /opt/venv && \
+  /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
+  /opt/venv/bin/pip install --no-cache-dir -r requirements.txt && \
+  /opt/venv/bin/python setup.py build_ext --inplace
 
 # -------------------------
 # The application container
@@ -32,6 +34,8 @@ EXPOSE 8000/tcp
 RUN apt-get update && \
   apt-get upgrade -y && \
   apt-get install -y --no-install-recommends \
+    build-essential python3 python3-dev python3-venv python3-pip \
+    python3-setuptools python3-cffi libffi-dev python3-wheel unzip \
     imagemagick \
     python3 \
     tini && \
@@ -50,3 +54,5 @@ ENV PATH=/root/.local/bin:$PATH
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
 CMD /root/.local/bin/gunicorn -b 0.0.0.0:8000 --worker-class gevent -w 12 tawhiri.api:app
+
+ENV PATH="/opt/venv/bin:$PATH"
