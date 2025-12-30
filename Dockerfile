@@ -50,6 +50,9 @@ RUN apt-get update && \
     tini && \
   rm -rf /var/lib/apt/lists/*
 
+RUN dpkg -l | grep -E 'python3(\.11)?-venv' || true
+RUN python3 -c "import ensurepip; print('ensurepip OK:', ensurepip.__file__)"
+  
 COPY --from=build /root/.local /root/.local
 COPY --from=build /root/tawhiri /root/tawhiri
 
