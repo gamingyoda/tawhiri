@@ -67,6 +67,42 @@ def make_piecewise_ascent(ascent_rate, burst_altitude,
 
     return ascent
 
+def make_piecewise2_ascent(ascent_rate, burst_altitude,
+                           x1=0.32, x2=0.75,
+                           f0=1.25, f1=1.47, f2=1.05, f3=0.60,
+                           min_factor=0.2, steps=4000):
+    """
+    (0,f0)->(x1,f1)->(x2,f2)->(1,f3)
+    time-preserving normalization
+    """
+    def _clip01(x): return 0.0 if x < 0.0 else (1.0 if x > 1.0 else x)
+
+    if burst_altitude <= 0:
+        return make_constant_ascent(ascent_rate)
+
+    def raw_factor(x):
+        x = _clip01(x)
+        if x <= x1:
+            f = f0 + (f1 - f0) * (x / x1 if x1 > 0 else 0.0)
+        elif x <= x2:
+            f = f1 + (f2 - f1) * ((x - x1) / (x2 - x1) if x2 > x1 else 0.0)
+        else:
+            f = f2 + (f3 - f2) * ((x - x2) / (1.0 - x2) if x2 < 1 else 0.0)
+        return max(f, min_factor)
+
+    s = 0.0
+    for i in range(steps):
+        x = (i + 0.5) / steps
+        s += 1.0 / raw_factor(x)
+    scale = s / steps
+
+    def ascent(t, lat, lng, alt):
+        x = alt / float(burst_altitude)
+        f = raw_factor(x)
+        return 0.0, 0.0, ascent_rate * f * scale
+
+    return ascent
+
 
 
 
@@ -228,7 +264,8 @@ def standard_profile(ascent_rate, burst_altitude, descent_rate,
        Returns a tuple of (model, terminator) pairs.
     """
 
-    model_up = make_linear_model([make_piecewise_ascent(ascent_rate, burst_altitude, x1=0.32, f0=1.25, f1=1.47, f2=0.77),
+    model_up = make_linear_model([make_piecewise2_ascent(ascent_rate, burst_altitude,
+                                                         x1=0.32, x2=0.70, f0=1.25, f1=1.70, f2=1.05, f3=1.05),
                                   make_wind_velocity(wind_dataset, warningcounts)])
     term_up = make_burst_termination(burst_altitude)
 
