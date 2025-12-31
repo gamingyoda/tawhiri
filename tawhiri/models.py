@@ -24,9 +24,7 @@ def make_constant_ascent(ascent_rate):
         return 0.0, 0.0, ascent_rate
     return constant_ascent
 
-def make_shaped_ascent(ascent_rate, burst_altitude, shape=0.19):
-    import sys
-    print("### HIT: make_shaped_ascent ###", ascent_rate, burst_altitude, shape, file=sys.stderr, flush=True)
+def make_shaped_ascent(ascent_rate, burst_altitude, shape=0.3):
     """
     Altitude-shaped ascent model.
 
@@ -215,7 +213,7 @@ def standard_profile(ascent_rate, burst_altitude, descent_rate,
        Returns a tuple of (model, terminator) pairs.
     """
 
-    model_up = make_linear_model([make_shaped_ascent(ascent_rate, burst_altitude, shape=0.19),
+    model_up = make_linear_model([make_shaped_ascent(ascent_rate, burst_altitude, shape=0.3),
                                   make_wind_velocity(wind_dataset, warningcounts)])
     term_up = make_burst_termination(burst_altitude)
 
