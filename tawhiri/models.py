@@ -228,7 +228,7 @@ def standard_profile(ascent_rate, burst_altitude, descent_rate,
        Returns a tuple of (model, terminator) pairs.
     """
 
-    model_up = make_linear_model([make_piecewise_ascent(ascent_rate, burst_altitude, x1=0.35, f0=1.08, f1=1.31, f2=0.86),
+    model_up = make_linear_model([make_piecewise_ascent(ascent_rate, burst_altitude, x1=0.32, f0=1.25, f1=1.47, f2=0.77),
                                   make_wind_velocity(wind_dataset, warningcounts)])
     term_up = make_burst_termination(burst_altitude)
 
