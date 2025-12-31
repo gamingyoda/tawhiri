@@ -24,16 +24,13 @@ def make_constant_ascent(ascent_rate):
         return 0.0, 0.0, ascent_rate
     return constant_ascent
 
-def make_shaped_ascent(ascent_rate, burst_altitude, shape=0.3, min_factor=0.2, steps=2000):
+def make_piecewise_ascent(ascent_rate, burst_altitude,
+                          x1=0.35, f0=1.08, f1=1.31, f2=0.86,
+                          min_factor=0.2, steps=2000):
     """
-    Altitude-shaped ascent model (time-preserving normalization).
-
-    v(alt) = ascent_rate * factor(x) * scale
-    x = alt/burst_altitude
-
-    NOTE:
-      - factor の平均=1 では到達時間は保存されない（tは 1/factor に依存）
-      - scale = mean(1/factor) を掛けて、到達時間（平均上昇率の意味）を保存する
+    Piecewise-linear factor:
+      (0, f0) -> (x1, f1) -> (1, f2)
+    then time-preserving normalization by scale = mean(1/factor)
     """
     def _clip01(x):
         if x < 0.0: return 0.0
@@ -43,24 +40,33 @@ def make_shaped_ascent(ascent_rate, burst_altitude, shape=0.3, min_factor=0.2, s
     if burst_altitude <= 0:
         return make_constant_ascent(ascent_rate)
 
-    # --- time-preserving scale（調和平均側で正規化）---
+    def raw_factor(x):
+        x = _clip01(x)
+        if x <= x1:
+            # 0..x1
+            f = f0 + (f1 - f0) * (x / x1 if x1 > 0 else 0.0)
+        else:
+            # x1..1
+            f = f1 + (f2 - f1) * ((x - x1) / (1.0 - x1) if x1 < 1 else 0.0)
+        if f < min_factor:
+            f = min_factor
+        return f
+
+    # time-preserving scale
     s = 0.0
     for i in range(steps):
         x = (i + 0.5) / steps
-        f = 1.0 + shape * (1.0 - 2.0 * x)
-        if f < min_factor:
-            f = min_factor
+        f = raw_factor(x)
         s += 1.0 / f
-    scale = s / steps  # mean(1/f)
+    scale = s / steps
 
-    def shaped_ascent(t, lat, lng, alt):
-        x = _clip01(alt / float(burst_altitude))
-        factor = 1.0 + shape * (1.0 - 2.0 * x)
-        if factor < min_factor:
-            factor = min_factor
-        return 0.0, 0.0, ascent_rate * factor * scale
+    def ascent(t, lat, lng, alt):
+        x = alt / float(burst_altitude)
+        f = raw_factor(x)
+        return 0.0, 0.0, ascent_rate * f * scale
 
-    return shaped_ascent
+    return ascent
+
 
 
 
@@ -222,7 +228,7 @@ def standard_profile(ascent_rate, burst_altitude, descent_rate,
        Returns a tuple of (model, terminator) pairs.
     """
 
-    model_up = make_linear_model([make_shaped_ascent(ascent_rate, burst_altitude, shape=0.3, min_factor=0.2, steps=2000),
+    model_up = make_linear_model([make_piecewise_ascent(ascent_rate, burst_altitude, x1=0.35, f0=1.08, f1=1.31, f2=0.86),
                                   make_wind_velocity(wind_dataset, warningcounts)])
     term_up = make_burst_termination(burst_altitude)
 
