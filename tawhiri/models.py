@@ -103,6 +103,79 @@ def make_piecewise2_ascent(ascent_rate, burst_altitude,
 
     return ascent
 
+def make_alt_dependent_ascent(ascent_rate, burst_altitude,
+                              alt_knots, v_knots,
+                              min_v=0.2, max_v=20.0,
+                              normalize_to_ascent_rate=True,
+                              steps=4000):
+    """
+    Altitude-dependent ascent model: dalt = v(alt)
+
+    alt_knots: 高度[m] の昇順リスト（例: [0, 5000, ..., burst_altitude]）
+    v_knots  : その高度での上昇速度[m/s] のリスト（同じ長さ）
+
+    normalize_to_ascent_rate=True:
+      v(alt) をスケールして、0→burst の所要時間が
+      burst_altitude/ascent_rate になるように補正（=平均上昇率を保つ）
+    """
+
+    if burst_altitude <= 0:
+        return make_constant_ascent(ascent_rate)
+
+    if len(alt_knots) != len(v_knots) or len(alt_knots) < 2:
+        raise ValueError("alt_knots と v_knots は同じ長さ(>=2)にしてください")
+
+    xs = [float(a) for a in alt_knots]
+    ys = [float(v) for v in v_knots]
+
+    for i in range(1, len(xs)):
+        if xs[i] <= xs[i-1]:
+            raise ValueError("alt_knots は昇順にしてください")
+
+    def v_of_alt(alt):
+        a = float(alt)
+
+        # 範囲外は端でクランプ
+        if a <= xs[0]:
+            v = ys[0]
+        elif a >= xs[-1]:
+            v = ys[-1]
+        else:
+            # xs[i-1] < a <= xs[i] を探して線形補間
+            i = 1
+            while xs[i] < a:
+                i += 1
+            x0, x1 = xs[i-1], xs[i]
+            y0, y1 = ys[i-1], ys[i]
+            r = (a - x0) / (x1 - x0)
+            v = y0 + (y1 - y0) * r
+
+        # 安全クリップ
+        if v < min_v:
+            v = min_v
+        if v > max_v:
+            v = max_v
+        return v
+
+    # v(alt) を平均上昇率(ascent_rate)に合わせるスケール
+    scale = 1.0
+    if normalize_to_ascent_rate and ascent_rate > 0:
+        # T = ∫ 1/v(alt) dalt を数値積分
+        s = 0.0
+        for i in range(steps):
+            a_mid = (i + 0.5) / steps * float(burst_altitude)
+            s += 1.0 / v_of_alt(a_mid)
+        T_profile = s / steps * float(burst_altitude)
+        T_target = float(burst_altitude) / float(ascent_rate)
+        if T_target > 0:
+            # v_new = v * scale => T_new = T_profile / scale
+            scale = T_profile / T_target
+
+    def ascent(t, lat, lng, alt):
+        return 0.0, 0.0, v_of_alt(alt) * scale
+
+    return ascent
+
 
 
 
@@ -264,9 +337,15 @@ def standard_profile(ascent_rate, burst_altitude, descent_rate,
        Returns a tuple of (model, terminator) pairs.
     """
 
-    model_up = make_linear_model([make_piecewise2_ascent(ascent_rate, burst_altitude,
-                                                         x1=0.32, x2=0.70, f0=1.25, f1=1.70, f2=1.05, f3=1.05),
-                                  make_wind_velocity(wind_dataset, warningcounts)])
+    model_up = make_linear_model([
+        make_alt_dependent_ascent(
+            ascent_rate, burst_altitude,
+            alt_knots = [500.0, 1500.0, 2500.0, 3500.0, 4500.0, 5500.0, 6500.0, 7500.0, 8500.0, 9500.0, 10500.0, 11500.0, 12500.0, 13500.0, 14500.0, 15500.0, 16500.0, 17500.0, 18500.0, 19500.0, 20500.0, 21500.0, 22500.0, 23500.0, 24500.0, 25500.0, 26500.0, 27500.0, 28500.0] ,
+            v_knots = [7.333333333333333, 6.0, 6.25, 5.0, 6.0, 5.0, 5.0, 5.0, 6.0, 6.0, 6.0, 5.0, 6.0, 4.75, 4.0, 6.0, 6.0, 5.0, 7.2, 5.25, 4.0, 4.0, 3.6666666666666665, 3.619047619047619, 4.0, 4.0, 4.0, 3.7, 3.6133004926108376],
+            normalize_to_ascent_rate=True,
+        ),
+        make_wind_velocity(wind_dataset, warningcounts)
+    ])
     term_up = make_burst_termination(burst_altitude)
 
     model_down = make_linear_model([make_drag_descent(descent_rate),
