@@ -24,35 +24,44 @@ def make_constant_ascent(ascent_rate):
         return 0.0, 0.0, ascent_rate
     return constant_ascent
 
-def make_shaped_ascent(ascent_rate, burst_altitude, shape=0.3):
+def make_shaped_ascent(ascent_rate, burst_altitude, shape=0.3, min_factor=0.2, steps=2000):
     """
-    Altitude-shaped ascent model.
+    Altitude-shaped ascent model (time-preserving normalization).
 
-    factor = 1 + shape*(1 - 2*x),  x = alt/burst_altitude in [0,1]
-      alt=0      -> factor = 1 + shape
-      alt=burst  -> factor = 1 - shape
-    平均（0〜burstで積分平均）を取ると factor の平均は 1 なので、
-    入力 ascent_rate を「平均上昇率」として保ったまま形だけ変えられる。
+    v(alt) = ascent_rate * factor(x) * scale
+    x = alt/burst_altitude
+
+    NOTE:
+      - factor の平均=1 では到達時間は保存されない（tは 1/factor に依存）
+      - scale = mean(1/factor) を掛けて、到達時間（平均上昇率の意味）を保存する
     """
+    def _clip01(x):
+        if x < 0.0: return 0.0
+        if x > 1.0: return 1.0
+        return x
+
+    if burst_altitude <= 0:
+        return make_constant_ascent(ascent_rate)
+
+    # --- time-preserving scale（調和平均側で正規化）---
+    s = 0.0
+    for i in range(steps):
+        x = (i + 0.5) / steps
+        f = 1.0 + shape * (1.0 - 2.0 * x)
+        if f < min_factor:
+            f = min_factor
+        s += 1.0 / f
+    scale = s / steps  # mean(1/f)
+
     def shaped_ascent(t, lat, lng, alt):
-        if burst_altitude <= 0:
-            return 0.0, 0.0, ascent_rate
-
-        x = alt / float(burst_altitude)
-        if x < 0.0:
-            x = 0.0
-        elif x > 1.0:
-            x = 1.0
-
+        x = _clip01(alt / float(burst_altitude))
         factor = 1.0 + shape * (1.0 - 2.0 * x)
-
-        # 安全のための下限（負の上昇や極端値を防ぐ）
-        if factor < 0.2:
-            factor = 0.2
-
-        return 0.0, 0.0, ascent_rate * factor
+        if factor < min_factor:
+            factor = min_factor
+        return 0.0, 0.0, ascent_rate * factor * scale
 
     return shaped_ascent
+
 
 
 def make_drag_descent(sea_level_descent_rate):
@@ -213,7 +222,7 @@ def standard_profile(ascent_rate, burst_altitude, descent_rate,
        Returns a tuple of (model, terminator) pairs.
     """
 
-    model_up = make_linear_model([make_shaped_ascent(ascent_rate, burst_altitude, shape=0.3),
+    model_up = make_linear_model([make_shaped_ascent(ascent_rate, burst_altitude, shape=0.3, min_factor=0.2, steps=2000),
                                   make_wind_velocity(wind_dataset, warningcounts)])
     term_up = make_burst_termination(burst_altitude)
 
