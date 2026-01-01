@@ -7,6 +7,7 @@ functions to combine models and termination conditions.
 
 import calendar
 import math
+import os
 
 from . import interpolate
 
@@ -228,6 +229,117 @@ def make_wind_velocity(dataset, warningcounts):
         return dlat, dlng, 0.0
     return wind_velocity
 
+def _interp1(x, xs, ys):
+    """
+    1D piecewise-linear interpolation.
+    xs: sorted list, same length as ys
+    """
+    if not xs:
+        return 0.0
+    if x <= xs[0]:
+        return ys[0]
+    if x >= xs[-1]:
+        return ys[-1]
+    # linear search (xs is short; OK). If long, replace with bisect.
+    for i in range(1, len(xs)):
+        if x <= xs[i]:
+            x0, x1 = xs[i-1], xs[i]
+            y0, y1 = ys[i-1], ys[i]
+            if x1 == x0:
+                return y0
+            a = (x - x0) / (x1 - x0)
+            return y0 + a * (y1 - y0)
+    return ys[-1]
+
+
+def _clamp(x, lo, hi):
+    return lo if x < lo else (hi if x > hi else x)
+
+def _ramp01(alt, a0, a1):
+    """
+    alt<=a0 -> 0, alt>=a1 -> 1, linear between.
+    a0/a1 が None のときは 1 固定（常に適用）
+    """
+    if a0 is None or a1 is None:
+        return 1.0
+    if a1 <= a0:
+        return 1.0
+    if alt <= a0:
+        return 0.0
+    if alt >= a1:
+        return 1.0
+    return (alt - a0) / (a1 - a0)
+def _clip(x, lo, hi):
+    return lo if x < lo else (hi if x > hi else x)
+
+def make_wind_velocity_alt_bias(dataset, warningcounts,
+                                alt_knots=None,
+                                du_knots=None, dv_knots=None,
+                                u_scale_knots=None, v_scale_knots=None,
+                                gain_u=1.0, gain_v=1.0,
+                                max_delta_u=3.0, max_delta_v=3.0):
+    """
+    Wind model with altitude-dependent correction, with stabilizers.
+
+    Base wind: (u0,v0) from dataset [m/s]
+    Raw corrected:
+      u_raw = u0 * su(alt) + du(alt)
+      v_raw = v0 * sv(alt) + dv(alt)
+
+    Then apply gains around the base wind:
+      u = u0 + gain_u * (u_raw - u0)
+      v = v0 + gain_v * (v_raw - v0)
+
+    And clip the deltas:
+      (u_raw - u0) is clipped to [-max_delta_u, +max_delta_u]
+      (v_raw - v0) is clipped to [-max_delta_v, +max_delta_v]
+    """
+    alt_knots = alt_knots or []
+    du_knots = du_knots or ([0.0] * len(alt_knots))
+    dv_knots = dv_knots or ([0.0] * len(alt_knots))
+    u_scale_knots = u_scale_knots or ([1.0] * len(alt_knots))
+    v_scale_knots = v_scale_knots or ([1.0] * len(alt_knots))
+
+    if not (len(alt_knots) == len(du_knots) == len(dv_knots) ==
+            len(u_scale_knots) == len(v_scale_knots)):
+        raise ValueError("alt_knots / du_knots / dv_knots / scale_knots length mismatch")
+
+    get_wind = interpolate.make_interpolator(dataset, warningcounts)
+    dataset_epoch = calendar.timegm(dataset.ds_time.timetuple())
+
+    def wind_velocity(t, lat, lng, alt):
+        t -= dataset_epoch
+        u0, v0 = get_wind(t / 3600.0, lat, lng, alt)
+
+        u, v = u0, v0
+        if alt_knots:
+            su = _interp1(alt, alt_knots, u_scale_knots)
+            sv = _interp1(alt, alt_knots, v_scale_knots)
+            du = _interp1(alt, alt_knots, du_knots)
+            dv = _interp1(alt, alt_knots, dv_knots)
+
+            u_raw = u0 * su + du
+            v_raw = v0 * sv + dv
+
+            du_total = u_raw - u0
+            dv_total = v_raw - v0
+
+            if max_delta_u is not None:
+                du_total = _clip(du_total, -float(max_delta_u), float(max_delta_u))
+            if max_delta_v is not None:
+                dv_total = _clip(dv_total, -float(max_delta_v), float(max_delta_v))
+
+            u = u0 + float(gain_u) * du_total
+            v = v0 + float(gain_v) * dv_total
+
+        R = 6371009 + alt
+        dlat = _180_PI * v / R
+        dlng = _180_PI * u / (R * math.cos(lat * _PI_180))
+        return dlat, dlng, 0.0
+
+    return wind_velocity
+
+
 
 def make_reverse_wind_velocity(dataset, warningcounts):
     """Return a reverse wind-velocity model, which gives reverse lateral movement at
@@ -326,33 +438,59 @@ def make_any_terminator(terminators):
 
 def standard_profile(ascent_rate, burst_altitude, descent_rate,
                      wind_dataset, elevation_dataset, warningcounts):
-    """Make a model chain for the standard high altitude balloon situation of
-       ascent at a constant rate followed by burst and subsequent descent
-       at terminal velocity under parachute with a predetermined sea level
-       descent rate.
 
-       Requires the balloon `ascent_rate`, `burst_altitude` and `descent_rate`,
-       and additionally requires the dataset to use for wind velocities.
+    # === paste from fit_wind_bias_knots.py ===
+    ALT_KNOTS = [1000, 3000, 5000, 7000, 9000, 11000, 13000, 15000, 17000, 19000, 21000, 23000, 25000]
+    DU_KNOTS  = [1.140, 1.795, 1.795, 0.357, 0.357, 0.674, 0.674, -3.870, -3.870, -1.384, -1.094, -1.384, -1.555]  # +east m/s
+    DV_KNOTS  = [-0.347, -0.719, -0.719, -1.200, -1.200, -2.550, 3.311, 3.311, 3.311, -0.240, -0.240, 0.732, 1.556]  # +north m/s
+    # ===========================
 
-       Returns a tuple of (model, terminator) pairs.
-    """
+    SU_KNOTS = [1.0] * len(ALT_KNOTS)
+    SV_KNOTS = [1.0] * len(ALT_KNOTS)
+
+    # === stabilizers / gains ===
+    # まず弱めに開始（ここをいじってチューニングする）
+    gain_u_up   = 0.4
+    gain_v_up   = 0.4
+    gain_u_down = 0.4
+    gain_v_down = 0.0   # ★まずは降下の緯度悪化を止めるため 0 推奨
+
+    max_du = 2.0        # ★最初は 1〜2 m/s 程度で
+    max_dv = 2.0
+
+    wind_up = make_wind_velocity_alt_bias(
+        wind_dataset, warningcounts,
+        alt_knots=ALT_KNOTS,
+        du_knots=DU_KNOTS, dv_knots=DV_KNOTS,
+        u_scale_knots=SU_KNOTS, v_scale_knots=SV_KNOTS,
+        gain_u=gain_u_up, gain_v=gain_v_up,
+        max_delta_u=max_du, max_delta_v=max_dv
+    )
+
+    wind_down = make_wind_velocity_alt_bias(
+        wind_dataset, warningcounts,
+        alt_knots=ALT_KNOTS,
+        du_knots=DU_KNOTS, dv_knots=DV_KNOTS,
+        u_scale_knots=SU_KNOTS, v_scale_knots=SV_KNOTS,
+        gain_u=gain_u_down, gain_v=gain_v_down,  # ★v補正を切れる
+        max_delta_u=max_du, max_delta_v=max_dv
+    )
 
     model_up = make_linear_model([
-        make_alt_dependent_ascent(
-            ascent_rate, burst_altitude,
-            alt_knots = [500.0, 1500.0, 2500.0, 3500.0, 4500.0, 5500.0, 6500.0, 7500.0, 8500.0, 9500.0, 10500.0, 11500.0, 12500.0, 13500.0, 14500.0, 15500.0, 16500.0, 17500.0, 18500.0, 19500.0, 20500.0, 21500.0, 22500.0, 23500.0, 24500.0, 25500.0, 26500.0, 27500.0, 28500.0] ,
-            v_knots = [7.333333333333333, 6.0, 6.25, 5.0, 6.0, 5.0, 5.0, 5.0, 6.0, 6.0, 6.0, 5.0, 6.0, 4.75, 4.0, 6.0, 6.0, 5.0, 7.2, 5.25, 4.0, 4.0, 3.6666666666666665, 3.619047619047619, 4.0, 4.0, 4.0, 3.7, 3.6133004926108376],
-            normalize_to_ascent_rate=True,
-        ),
-        make_wind_velocity(wind_dataset, warningcounts)
+        make_constant_ascent(ascent_rate),
+        wind_up
     ])
     term_up = make_burst_termination(burst_altitude)
 
-    model_down = make_linear_model([make_drag_descent(descent_rate),
-                                    make_wind_velocity(wind_dataset, warningcounts)])
+    model_down = make_linear_model([
+        make_drag_descent(descent_rate),
+        wind_down
+    ])
     term_down = make_elevation_data_termination(elevation_dataset)
 
     return ((model_up, term_up), (model_down, term_down))
+
+
 
 
 def float_profile(ascent_rate, float_altitude, stop_time, dataset, warningcounts):
